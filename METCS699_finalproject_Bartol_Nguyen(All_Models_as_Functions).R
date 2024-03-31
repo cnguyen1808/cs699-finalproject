@@ -514,25 +514,26 @@ library(RWeka)
 modelLookup("rf")
 test_df <- over_balance(main.train.df)
 test_df <- boruta_selection(main.train.df)
+#split dataset
+set.seed(31)
+split <- initial_split(test_df, prop = 0.66, strata = Class)
+split.train <- training(split)
+split.test <- testing(split)
 
-train_rfModel <- function(test_df) {
-  #split dataset
-  set.seed(31)
-  split <- initial_split(test_df, prop = 0.66, strata = Class)
-  split.train <- training(split)
-  split.test <- testing(split)
-  
+
+train_rfModel <- function(train,test,original_test) {
+
   #Establish control parameters
   ctrl <- trainControl(method = "CV",
                        summaryFunction = twoClassSummary,
                        classProbs = TRUE,
                        savePredictions = TRUE)
   #number of features considered at each split
-  mtryValues <- seq(2, ncol(split.train)-1, by = 1)
+  mtryValues <- seq(2, ncol(train)-1, by = 1)
   
   #train random forest model
-  rfFit <- caret::train(x = split.train[, -nrow(split.train)], 
-                        y = split.train$Class,
+  rfFit <- caret::train(x = train[, -nrow(train)], 
+                        y = train$Class,
                         method = "rf",
                         ntree = 500,
                         tuneGrid = data.frame(mtry = mtryValues),
@@ -546,9 +547,14 @@ train_rfModel <- function(test_df) {
   imp
   
   #Use model to predeict test data
-  rf_pred <- predict(rfFit, split.test)
-  rf_performance <- compute_metrics_and_build_table(rf_pred, split.test$Class)
-  return(list(rf_model = rfFit, rf_performance = rf_performance))
+  rf_pred <- predict(rfFit, test)
+  rf_performance_pred <- compute_metrics_and_build_table(rf_pred, test$Class)
+  #Use model on main test data
+  rf_pred <- predict(rfFit, original_test)
+  rf_performance <- compute_metrics_and_build_table(rf_pred, original_test$Class)
+  
+  return(list(rf_model = rfFit, rf_performance_pred = rf_performance_pred,
+              rf_performance_main = rf_performance_main ))
 }
 
 
@@ -559,52 +565,50 @@ train_rfModel <- function(test_df) {
 ##############################################
 # Para Tuning
 # use KNN Model
+#split dataset
+set.seed(31)
+split <- initial_split(df, prop = 0.66, strata = Class)
+split.train <- training(split)
+split.test <- testing(split)
 
 #Run Feature selected dataset through KNN model
-train_and_select_knnModel <- function(df) {
-  #split dataset
-  set.seed(31)
-  split <- initial_split(df, prop = 0.66, strata = Class)
-  split.train <- training(split)
-  split.test <- testing(split)
-  
+train_and_select_knnModel <- function(train,test,original_test) {
+
   # repeat 10-fold cross-validation 5 times
   knn_train_control <- trainControl(method = "repeatedcv", number = 10, repeats = 5, 
                                     summaryFunction = defaultSummary)
   
   #Train the initial KNN model on untuned model
-  knnModel_untuned <- train(Class ~., data = split.train, method = "knn",
+  knnModel_untuned <- train(Class ~., data = train, method = "knn",
                             trControl= knn_train_control,
                             preProcess = c("center", "scale"),
                             tuneLength = 200)
   
   #Run Mode on Test dataset
-  test_pred_untuned <- predict(knnModel_untuned, newdata = split.test)
+  test_pred_untuned <- predict(knnModel_untuned, newdata = test)
   #Performace statistics of untuned model
-  untuned_statistics <- compute_metrics_and_build_table(test_pred_untuned, split.test$Class)
+  untuned_statistics <- compute_metrics_and_build_table(test_pred_untuned, test$Class)
   
   
   #Training the KNN Model with a Specific Grid of K Values to tune it:
   knnGrid <-  expand.grid(k = seq(1, 100, 2))
-  knnModel_tuned <- train(Class ~., data = split.train, method = "knn",
+  knnModel_tuned <- train(Class ~., data = train, method = "knn",
                           trControl=knn_train_control,
                           preProcess = c("center", "scale"),
                           tuneGrid = knnGrid)
   
   #Run Model on tuned dataset
-  test_pred_tuned <- predict(knnModel_tuned, newdata = split.test)
+  test_pred_tuned <- predict(knnModel_tuned, newdata = test)
   #Performace statistics of tuned model
-  tuned_statistics <- compute_metrics_and_build_table(test_pred_tuned, split.test$Class)
+  tuned_statistics_pred <- compute_metrics_and_build_table(test_pred_tuned, test$Class)
   
-  #compare the weighted average accuracy of both models, and return the model with greater accruacy
-  if(untuned_statistics[3, 2] < tuned_statistics[3, 2]){
-    best_knnModel <- knnModel_tuned
-    best_performance <- tuned_statistics
-  } else{
-    best_knnModel <- knnModel_untuned
-    best_performance <- untuned_statistics
-  }
-  return(list(knn_model = best_knnModel, knn_performance = best_performance))
+  #run model on main test data
+  test_pred_tuned <- predict(knnModel_tuned, newdata = original_test)
+  #Performace statistics of tuned model
+  tuned_statistics_main <- compute_metrics_and_build_table(test_pred_tuned, original_test$Class)
+
+  return(list(knn_model = knnModel_tuned, knn_performance_pred = tuned_statistics_pred,
+              knn_performance_main = tuned_statistics_main))
          
 }
 
@@ -651,14 +655,14 @@ running each balanced dataset for each type of feature selection:
 ##############################################
 test_df <- over_balance(main.train.df)
 test_df <- boruta_selection(main.train.df)
+library(rsample)
+set.seed(31)
+split <- initial_split(test_df, prop = 0.66, strata = Class)
+split.train <- training(split)
+split.test <- testing(split)
 
 #nnet Model function
-train_nnetModel <- function(test_df) {
-  library(rsample)
-  set.seed(31)
-  split <- initial_split(test_df, prop = 0.66, strata = Class)
-  split.train <- training(split)
-  split.test <- testing(split)
+train_nnetModel <- function(train,test,original_test) {
   
   #Establish control parameters
   ctrl <- trainControl(method = "CV", number = 10,
@@ -671,8 +675,8 @@ train_nnetModel <- function(test_df) {
   
   set.seed(31)
   #Run nnet Model
-  nnetFit <- train(x = split.train[, -ncol(split.train)], 
-                   y = split.train$Class,
+  nnetFit <- train(x = train[, -ncol(train)], 
+                   y = train$Class,
                    method = "nnet",
                    metric = "ROC",
                    preProc = c("center", "scale"),
@@ -686,13 +690,18 @@ train_nnetModel <- function(test_df) {
   nnetFit$bestTune
   
   #run model on test data
-  nnet_test_pred <- predict(nnetFit, newdata = split.test)
+  nnet_test_pred <- predict(nnetFit, newdata = test)
   nnet_test_pred
   #check test data performance
-  nnet_performance <-compute_metrics_and_build_table(nnet_test_pred, split.test$Class)
+  nnet_performance_pred <-compute_metrics_and_build_table(nnet_test_pred, test$Class)
+  
+  #run on main test dataset
+  nnet_test_pred <- predict(nnetFit, newdata = original_test)
+  nnet_performance_main <-compute_metrics_and_build_table(nnet_test_pred, original_test$Class)
   
   #return model and model performance
-  return(list(nnet_model = nnetFit, nnet_performance = nnet_performance))
+  return(list(nnet_model = nnetFit, nnet_performance_pred = nnet_performance_pred,
+              nnet_performance_main = nnet_performance_main))
 }
   
 #Example
